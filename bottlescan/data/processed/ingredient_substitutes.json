@@ -1,0 +1,68 @@
+{
+  "parfum": [
+    {
+      "name": "fragrance-free formulation",
+      "score": 95,
+      "role": "remove fragrance",
+      "confidence": 0.95
+    },
+    {
+      "name": "essential oil blend",
+      "score": 60,
+      "role": "natural fragrance",
+      "confidence": 0.70
+    }
+  ],
+  "methylparaben": [
+    {
+      "name": "leucidal liquid",
+      "score": 75,
+      "role": "preservative",
+      "confidence": 0.85
+    },
+    {
+      "name": "sodium benzoate",
+      "score": 65,
+      "role": "preservative",
+      "confidence": 0.80
+    }
+  ],
+  "propylparaben": [
+    {
+      "name": "potassium sorbate",
+      "score": 70,
+      "role": "preservative",
+      "confidence": 0.82
+    }
+  ],
+  "sodium lauryl sulfate": [
+    {
+      "name": "sodium cocoyl isethionate",
+      "score": 78,
+      "role": "surfactant",
+      "confidence": 0.88
+    },
+    {
+      "name": "decyl glucoside",
+      "score": 82,
+      "role": "surfactant",
+      "confidence": 0.85
+    }
+  ],
+  "triclosan": [
+    {
+      "name": "tea tree oil",
+      "score": 70,
+      "role": "antimicrobial",
+      "confidence": 0.75
+    }
+  ],
+  "quaternium-15": [
+    {
+      "name": "phenoxyethanol",
+      "score": 45,
+      "role": "preservative",
+      "confidence": 0.80
+    }
+  ]
+}
