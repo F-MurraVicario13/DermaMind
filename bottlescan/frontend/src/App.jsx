@@ -1,107 +1,83 @@
 import React, { useState } from 'react';
-import { Camera, Upload, CheckCircle, AlertTriangle, XCircle, Sparkles, Info, ShoppingCart, DollarSign, Star, ExternalLink } from 'lucide-react';
+import { Camera, Upload, CheckCircle, AlertTriangle, XCircle, Sparkles, Info, ShoppingCart, DollarSign, Star, ExternalLink, Scan, ArrowRight } from 'lucide-react';
 
 const BottleScanDemo = () => {
   const [step, setStep] = useState('upload');
   const [analysis, setAnalysis] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [productRecommendations, setProductRecommendations] = useState([]);
-  const [priceComparison, setPriceComparison] = useState(null);
+  const [priceComparisons, setPriceComparisons] = useState({});
   const [showRecommendations, setShowRecommendations] = useState(false);
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+  const [loadingPrices, setLoadingPrices] = useState({});
   const [apiError, setApiError] = useState(null);
 
-  // Mock health scores based on your spec
-  const healthScoreDB = {
-    'niacinamide': { score: 90, reason: 'Beneficial vitamin B3; skin brightening and barrier support' },
-    'glycerin': { score: 88, reason: 'Excellent humectant; hydrates and improves skin barrier' },
-    'hyaluronic acid': { score: 92, reason: 'Superior hydration; holds 1000x its weight in water' },
-    'aqua': { score: 95, reason: 'Water - universal solvent, completely safe' },
-    'butylene glycol': { score: 70, reason: 'Humectant and penetration enhancer; generally safe' },
-    'tocopherol': { score: 85, reason: 'Vitamin E; antioxidant with skin-protective properties' },
-    'methylparaben': { score: 15, reason: 'Preservative with endocrine disruption concerns' },
-    'propylparaben': { score: 12, reason: 'Paraben preservative; potential hormone disruptor' },
-    'parfum': { score: 20, reason: 'Fragrance - common allergen, often contains phthalates' },
-    'fragrance': { score: 20, reason: 'Synthetic fragrance - allergen risk, no functional benefit' },
-    'sodium lauryl sulfate': { score: 25, reason: 'Harsh surfactant; can strip natural oils and irritate' },
-    'phenoxyethanol': { score: 45, reason: 'Preservative with moderate safety concerns' },
-    'retinol': { score: 82, reason: 'Vitamin A derivative; anti-aging but can be irritating' },
-    'ascorbic acid': { score: 88, reason: 'Vitamin C; brightening and antioxidant properties' }
-  };
-
-  const substitutes = {
-    'methylparaben': [
-      { name: 'leucidal liquid', score: 75, type: 'Fermented radish root; natural preservative' },
-      { name: 'sodium benzoate', score: 65, type: 'Food-grade preservative; safer alternative' }
-    ],
-    'parfum': [
-      { name: 'fragrance-free formulation', score: 95, type: 'Remove entirely for sensitive skin' },
-      { name: 'essential oil blend', score: 60, type: 'Natural fragrance (still potential allergen)' }
-    ],
-    'sodium lauryl sulfate': [
-      { name: 'sodium cocoyl isethionate', score: 78, type: 'Gentle coconut-derived surfactant' },
-      { name: 'decyl glucoside', score: 82, type: 'Mild sugar-based cleanser' }
-    ]
-  };
-
-  const handleImageUpload = (e) => {
+  const handleImageUpload = async (e) => {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         setImagePreview(reader.result);
-        setTimeout(() => simulateOCR(), 1500);
+        setStep('processing');
+        await processImage(file);
       };
       reader.readAsDataURL(file);
-      setStep('processing');
     }
   };
 
-  const simulateOCR = () => {
-    const mockIngredients = [
-      'Aqua', 'Glycerin', 'Niacinamide', 'Butylene Glycol', 
-      'Phenoxyethanol', 'Parfum', 'Methylparaben'
-    ];
-    setStep('results');
-    analyzeIngredients(mockIngredients);
-  };
+  const processImage = async (imageFile) => {
+    setLoadingAnalysis(true);
+    setApiError(null);
 
-  const analyzeIngredients = (ingList) => {
-    const analyzed = ingList.map(ing => {
-      const normalized = ing.toLowerCase();
-      const data = healthScoreDB[normalized] || { 
-        score: 60, 
-        reason: 'Common ingredient; limited safety data available' 
-      };
-      return {
-        ingredient: ing,
-        normalized,
-        ...data
-      };
-    });
+    try {
+      const formData = new FormData();
+      formData.append('image', imageFile);
 
-    const avgScore = Math.round(
-      analyzed.reduce((sum, item) => sum + item.score, 0) / analyzed.length
-    );
+      const ocrResponse = await fetch('http://localhost:8000/ocr-extract', {
+        method: 'POST',
+        body: formData
+      });
 
-    const flaggedIngredients = analyzed.filter(i => i.score < 50);
+      if (!ocrResponse.ok) {
+        throw new Error(`OCR failed: ${ocrResponse.status}`);
+      }
 
-    setAnalysis({
-      ingredients: analyzed,
-      productScore: avgScore,
-      flaggedIngredients: flaggedIngredients
-    });
+      const ocrData = await ocrResponse.json();
 
-    // If there are flagged ingredients, get product recommendations
-    if (flaggedIngredients.length > 0) {
-      getProductRecommendations(flaggedIngredients.map(i => i.ingredient));
+      const analysisResponse = await fetch('http://localhost:8000/analyze-ingredients', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ingredients: ocrData.ingredients
+        })
+      });
+
+      if (!analysisResponse.ok) {
+        throw new Error(`Analysis failed: ${analysisResponse.status}`);
+      }
+
+      const analysisData = await analysisResponse.json();
+      setAnalysis(analysisData);
+      setStep('results');
+
+      if (analysisData.flaggedIngredients && analysisData.flaggedIngredients.length > 0) {
+        await getProductRecommendations(analysisData.flaggedIngredients.map(i => i.ingredient));
+      }
+
+    } catch (error) {
+      console.error('Error processing image:', error);
+      setApiError(`Error: ${error.message}`);
+      setStep('upload');
+    } finally {
+      setLoadingAnalysis(false);
     }
   };
 
   const getProductRecommendations = async (flaggedIngredients) => {
-    console.log('Fetching product recommendations for:', flaggedIngredients);
     setLoadingRecommendations(true);
-    setApiError(null);
     
     try {
       const response = await fetch('http://localhost:8000/recommend-products', {
@@ -111,118 +87,142 @@ const BottleScanDemo = () => {
         },
         body: JSON.stringify({
           flagged_ingredients: flaggedIngredients,
-          original_category: 'serum', // Default category
+          original_category: 'serum',
           skin_type: ['combination', 'oily'],
           concerns: ['acne', 'texture'],
           max_results: 5
         })
       });
       
-      console.log('Response status:', response.status);
-      
       if (response.ok) {
         const recommendations = await response.json();
-        console.log('Received recommendations:', recommendations);
         setProductRecommendations(recommendations);
-        setShowRecommendations(true);
-      } else {
-        const errorText = await response.text();
-        console.error('API Error:', response.status, errorText);
-        setApiError(`API Error: ${response.status} - ${errorText}`);
-        setProductRecommendations([]);
         setShowRecommendations(true);
       }
     } catch (error) {
-      console.error('Network Error fetching product recommendations:', error);
-      setApiError(`Network Error: ${error.message}`);
-      setProductRecommendations([]);
-      setShowRecommendations(true);
+      console.error('Network Error:', error);
     } finally {
       setLoadingRecommendations(false);
     }
   };
 
   const getPriceComparison = async (productId) => {
-    console.log('Fetching price comparison for product:', productId);
+    setLoadingPrices(prev => ({ ...prev, [productId]: true }));
     
     try {
       const response = await fetch(`http://localhost:8000/price-comparison/${productId}`);
-      console.log('Price comparison response status:', response.status);
       
       if (response.ok) {
         const priceData = await response.json();
-        console.log('Received price data:', priceData);
-        setPriceComparison(priceData);
-      } else {
-        console.error('Price comparison API Error:', response.status, await response.text());
+        setPriceComparisons(prev => ({
+          ...prev,
+          [productId]: priceData
+        }));
       }
     } catch (error) {
-      console.error('Network Error fetching price comparison:', error);
+      console.error('Price comparison error:', error);
+    } finally {
+      setLoadingPrices(prev => ({ ...prev, [productId]: false }));
     }
   };
 
   const getScoreColor = (score) => {
-    if (score >= 76) return 'text-green-600';
-    if (score >= 51) return 'text-yellow-600';
-    if (score >= 26) return 'text-orange-600';
-    return 'text-red-600';
+    if (score >= 76) return '#22c55e';
+    if (score >= 51) return '#f59e0b';
+    if (score >= 26) return '#f97316';
+    return '#ef4444';
   };
 
-  const getScoreIcon = (score) => {
-    if (score >= 76) return <CheckCircle className="w-5 h-5" />;
-    if (score >= 51) return <Info className="w-5 h-5" />;
-    if (score >= 26) return <AlertTriangle className="w-5 h-5" />;
-    return <XCircle className="w-5 h-5" />;
-  };
-
-  const getScoreLabel = (score) => {
-    if (score >= 76) return 'Healthy / Preferred';
-    if (score >= 51) return 'Generally Okay';
-    if (score >= 26) return 'Use with Caution';
-    return 'Avoid';
+  const resetApp = () => {
+    setStep('upload');
+    setAnalysis(null);
+    setImagePreview(null);
+    setProductRecommendations([]);
+    setPriceComparisons({});
+    setShowRecommendations(false);
+    setLoadingAnalysis(false);
+    setLoadingRecommendations(false);
+    setLoadingPrices({});
+    setApiError(null);
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen" style={{ background: 'linear-gradient(135deg, #FFB5B5 0%, #FFC9A3 50%, #FFE5B4 100%)' }}>
+      {/* Floating decoration elements */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 left-10 w-16 h-16 opacity-20" style={{ transform: 'rotate(-15deg)' }}>
+          <Sparkles className="w-full h-full text-indigo-500" />
+        </div>
+        <div className="absolute top-40 right-20 w-12 h-12 opacity-20" style={{ transform: 'rotate(25deg)' }}>
+          <Camera className="w-full h-full text-indigo-500" />
+        </div>
+        <div className="absolute bottom-32 left-1/4 w-14 h-14 opacity-20" style={{ transform: 'rotate(45deg)' }}>
+          <Scan className="w-full h-full text-indigo-500" />
+        </div>
+      </div>
+
+      <div className="relative max-w-4xl mx-auto px-6 py-12">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-3 mb-3">
-            <Sparkles className="w-8 h-8 text-indigo-600" />
-            <h1 className="text-4xl font-bold text-gray-800">BottleScan</h1>
+        <div className="text-center mb-16">
+          <div className="inline-block mb-4">
+            <svg width="80" height="80" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="40" cy="40" r="35" fill="#6366F1" opacity="0.1"/>
+              <path d="M35 25 L45 25 C50 25 55 30 55 35 L55 45 C55 50 50 55 45 55 L35 55 C30 55 25 50 25 45 L25 35 C25 30 30 25 35 25 Z" stroke="#6366F1" strokeWidth="3" fill="none"/>
+              <circle cx="40" cy="40" r="8" fill="#6366F1"/>
+            </svg>
           </div>
-          <p className="text-gray-600">Skincare OCR & Ingredient Health Advisor</p>
-          <p className="text-sm text-gray-500 mt-2">Powered by Kaggle Skincare Dataset</p>
+          <h1 className="text-5xl font-bold mb-3" style={{ 
+            background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            letterSpacing: '-0.02em'
+          }}>
+            DermaMind
+          </h1>
+          <p className="text-lg text-gray-700 font-medium">Discover Your Product's Story</p>
         </div>
 
         {/* Upload Section */}
         {step === 'upload' && (
-          <div className="bg-white rounded-2xl shadow-lg p-8">
-            <h2 className="text-2xl font-semibold mb-6 text-center">Upload Product Label</h2>
-            
-            <div className="border-3 border-dashed border-indigo-300 rounded-xl p-12 text-center hover:border-indigo-500 transition-colors">
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-                id="file-upload"
-              />
-              <label htmlFor="file-upload" className="cursor-pointer">
-                <Camera className="w-16 h-16 mx-auto mb-4 text-indigo-500" />
-                <p className="text-lg font-medium text-gray-700 mb-2">
-                  Take a photo or upload an image
-                </p>
-                <p className="text-sm text-gray-500">
-                  Capture the ingredient list on your product
-                </p>
-              </label>
-            </div>
+          <div className="max-w-lg mx-auto">
+            <div className="bg-white rounded-3xl shadow-2xl overflow-hidden" style={{ boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+              <div className="p-10">
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                  id="file-upload"
+                />
+                <label 
+                  htmlFor="file-upload" 
+                  className="block cursor-pointer"
+                >
+                  <div className="text-center mb-8">
+                    <div className="w-32 h-32 mx-auto mb-6 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)' }}>
+                      <Camera className="w-16 h-16 text-white" strokeWidth={1.5} />
+                    </div>
+                    <h2 className="text-2xl font-bold text-gray-800 mb-3">Take a Scan</h2>
+                    <p className="text-gray-600">Photograph your product's ingredient list</p>
+                  </div>
+                  
+                  <div className="w-full py-5 text-center rounded-2xl font-bold text-white text-lg" style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)' }}>
+                    Get Started
+                  </div>
+                </label>
 
-            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-              <p className="text-sm text-gray-700">
-                <strong>Demo Mode:</strong> This demo simulates OCR processing. 
-                Full implementation uses Tesseract OCR with preprocessing pipeline.
+                {apiError && (
+                  <div className="mt-6 p-4 bg-red-50 rounded-2xl border-2 border-red-200">
+                    <p className="text-red-700 text-sm">{apiError}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="mt-6 text-center">
+              <p className="text-sm text-gray-600">
+                Clear photos give the best results
               </p>
             </div>
           </div>
@@ -230,305 +230,168 @@ const BottleScanDemo = () => {
 
         {/* Processing */}
         {step === 'processing' && (
-          <div className="bg-white rounded-2xl shadow-lg p-8 text-center">
-            <div className="animate-pulse">
-              <Upload className="w-16 h-16 mx-auto mb-4 text-indigo-500" />
-              <h2 className="text-2xl font-semibold mb-2">Processing Image...</h2>
-              <p className="text-gray-600">
-                Applying OCR and extracting ingredients
-              </p>
+          <div className="max-w-lg mx-auto">
+            <div className="bg-white rounded-3xl shadow-2xl p-10 text-center">
+              <div className="w-24 h-24 mx-auto mb-6 rounded-full flex items-center justify-center animate-pulse" style={{ background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)' }}>
+                <Scan className="w-12 h-12 text-white" />
+              </div>
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">Analyzing...</h2>
+              <p className="text-gray-600 mb-8">Reading ingredients</p>
+              {imagePreview && (
+                <img 
+                  src={imagePreview} 
+                  alt="Preview" 
+                  className="mt-6 max-w-full mx-auto rounded-2xl shadow-lg"
+                />
+              )}
             </div>
-            {imagePreview && (
-              <img 
-                src={imagePreview} 
-                alt="Preview" 
-                className="mt-6 max-w-sm mx-auto rounded-lg shadow"
-              />
-            )}
           </div>
         )}
 
         {/* Results */}
         {step === 'results' && analysis && (
           <div className="space-y-6">
-            {/* Overall Score Card */}
-            <div className="bg-white rounded-2xl shadow-lg p-8">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-semibold">Product Analysis</h2>
-                <button
-                  onClick={() => {
-                    setStep('upload');
-                    setAnalysis(null);
-                    setImagePreview(null);
-                    setProductRecommendations([]);
-                    setPriceComparison(null);
-                    setShowRecommendations(false);
-                    setLoadingRecommendations(false);
-                    setApiError(null);
-                  }}
-                  className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors"
-                >
-                  Scan Another
-                </button>
+            {/* Hero Score */}
+            <div className="bg-white rounded-3xl shadow-2xl p-10 text-center">
+              <button
+                onClick={resetApp}
+                className="float-right px-6 py-2 rounded-full text-sm font-semibold" style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)', color: 'white' }}
+              >
+                New Scan
+              </button>
+              
+              <div className="clear-both mb-8">
+                <h2 className="text-3xl font-bold text-gray-800 mb-2">Your Results</h2>
+                <p className="text-gray-600">Based on {analysis.ingredients?.length || 0} ingredients</p>
               </div>
 
-              <div className="flex items-center gap-4 mb-6">
-                <div className={`text-6xl font-bold ${getScoreColor(analysis.productScore)}`}>
-                  {analysis.productScore}
-                </div>
-                <div>
-                  <div className={`flex items-center gap-2 ${getScoreColor(analysis.productScore)} font-semibold`}>
-                    {getScoreIcon(analysis.productScore)}
-                    {getScoreLabel(analysis.productScore)}
+              <div className="relative inline-block mb-8">
+                <svg width="200" height="200" viewBox="0 0 200 200">
+                  <circle cx="100" cy="100" r="90" fill="none" stroke="#f3f4f6" strokeWidth="12"/>
+                  <circle 
+                    cx="100" 
+                    cy="100" 
+                    r="90" 
+                    fill="none" 
+                    stroke={getScoreColor(analysis.productScore)}
+                    strokeWidth="12"
+                    strokeDasharray={`${(analysis.productScore / 100) * 565} 565`}
+                    strokeLinecap="round"
+                    transform="rotate(-90 100 100)"
+                  />
+                  <text x="100" y="110" textAnchor="middle" className="text-5xl font-bold" fill="#1f2937">
+                    {analysis.productScore}
+                  </text>
+                </svg>
+              </div>
+
+              {analysis.flaggedIngredients && analysis.flaggedIngredients.length > 0 && (
+                <div className="mt-8 p-6 rounded-2xl" style={{ background: 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)' }}>
+                  <div className="flex items-center justify-center gap-3 mb-3">
+                    <AlertTriangle className="w-6 h-6 text-amber-700" />
+                    <p className="font-bold text-gray-800">
+                      {analysis.flaggedIngredients.length} ingredient{analysis.flaggedIngredients.length > 1 ? 's' : ''} to avoid
+                    </p>
                   </div>
-                  <p className="text-gray-600 text-sm mt-1">Overall Product Score</p>
-                </div>
-              </div>
-
-              {analysis.flaggedIngredients.length > 0 && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <p className="font-semibold text-red-800 mb-2">
-                    ⚠️ {analysis.flaggedIngredients.length} Concerning Ingredient(s) Found
-                  </p>
-                  <p className="text-sm text-red-700 mb-3">
-                    {analysis.flaggedIngredients.map(i => i.ingredient).join(', ')}
-                  </p>
                   <button
                     onClick={() => setShowRecommendations(!showRecommendations)}
                     disabled={loadingRecommendations}
-                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+                    className="mt-4 px-8 py-3 rounded-full font-bold text-white inline-flex items-center gap-2"
+                    style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)' }}
                   >
-                    <ShoppingCart className="w-4 h-4" />
-                    {loadingRecommendations ? 'Loading...' : (showRecommendations ? 'Hide' : 'Find')} Product Substitutes
+                    Find Better Products
+                    <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>
               )}
             </div>
 
-            {/* Ingredient Breakdown */}
-            <div className="bg-white rounded-2xl shadow-lg p-8">
-              <h3 className="text-xl font-semibold mb-4">Ingredient Breakdown</h3>
+            {/* Ingredient Cards */}
+            <div className="bg-white rounded-3xl shadow-2xl p-8">
+              <h3 className="text-2xl font-bold text-gray-800 mb-6">Ingredients</h3>
               <div className="space-y-3">
-                {analysis.ingredients.map((ing, idx) => (
-                  <div key={idx} className="border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex items-center gap-3">
-                        <span className={`${getScoreColor(ing.score)}`}>
-                          {getScoreIcon(ing.score)}
-                        </span>
-                        <div>
-                          <p className="font-semibold text-gray-800">{ing.ingredient}</p>
-                          <p className={`text-sm font-medium ${getScoreColor(ing.score)}`}>
-                            Score: {ing.score}/100
-                          </p>
+                {analysis.ingredients && analysis.ingredients.map((ing, idx) => {
+                  const scoreColor = getScoreColor(ing.score);
+                  return (
+                    <div key={idx} className="bg-gray-50 rounded-2xl p-5 hover:bg-gray-100 transition-colors">
+                      <div className="flex items-center gap-4">
+                        <div className="w-14 h-14 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-lg" style={{ backgroundColor: scoreColor + '20', color: scoreColor }}>
+                          {ing.score}
+                        </div>
+                        <div className="flex-1">
+                          <p className="font-bold text-gray-800 mb-1">{ing.ingredient}</p>
+                          <p className="text-sm text-gray-600">{ing.reason}</p>
                         </div>
                       </div>
                     </div>
-                    <p className="text-sm text-gray-600 pl-8">{ing.reason}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
             {/* Product Recommendations */}
             {showRecommendations && (
-              <div className="bg-white rounded-2xl shadow-lg p-8">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl font-semibold">🛍️ Product Substitutes & Pricing Guide</h3>
-                  <button
-                    onClick={() => setShowRecommendations(false)}
-                    className="text-gray-500 hover:text-gray-700"
-                  >
-                    ✕
-                  </button>
-                </div>
+              <div className="bg-white rounded-3xl shadow-2xl p-8">
+                <h3 className="text-2xl font-bold text-gray-800 mb-6">Better Products</h3>
                 
                 {loadingRecommendations && (
-                  <div className="text-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                    <p className="mt-2 text-gray-600">Loading product recommendations...</p>
+                  <div className="text-center py-16">
+                    <div className="w-16 h-16 mx-auto mb-4 rounded-full animate-pulse" style={{ background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)' }}></div>
+                    <p className="text-gray-600">Finding alternatives...</p>
                   </div>
                 )}
                 
-                {apiError && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-                    <p className="text-red-800 font-semibold">Error loading recommendations:</p>
-                    <p className="text-red-700 text-sm mt-1">{apiError}</p>
-                    <button
-                      onClick={() => {
-                        setApiError(null);
-                        const flaggedIngredients = analysis.flaggedIngredients.map(i => i.ingredient);
-                        getProductRecommendations(flaggedIngredients);
-                      }}
-                      className="mt-2 bg-red-100 text-red-700 px-3 py-1 rounded text-sm hover:bg-red-200"
-                    >
-                      Retry
-                    </button>
-                  </div>
-                )}
-                
-                {!loadingRecommendations && !apiError && productRecommendations.length === 0 && (
-                  <div className="text-center py-8">
-                    <p className="text-gray-600">No product substitutes found for the flagged ingredients.</p>
-                    <p className="text-sm text-gray-500 mt-2">Try different ingredients or check back later.</p>
-                  </div>
-                )}
-                
-                {!loadingRecommendations && !apiError && productRecommendations.length > 0 && (
-                  <div className="grid gap-6 md:grid-cols-2">
-                  {productRecommendations.map((product, idx) => (
-                    <div key={idx} className="border border-gray-200 rounded-xl p-6 hover:shadow-md transition-shadow">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-2">
-                            <span className="text-sm font-medium text-gray-600">{product.brand}</span>
-                            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                              {product.category}
-                            </span>
+                {!loadingRecommendations && productRecommendations.length > 0 && (
+                  <div className="space-y-4">
+                    {productRecommendations.map((product, idx) => (
+                      <div key={idx} className="bg-gray-50 rounded-2xl p-6 hover:shadow-lg transition-all">
+                        <div className="flex gap-4">
+                          <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-2xl font-bold text-white flex-shrink-0" style={{ background: 'linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%)' }}>
+                            {product.name.charAt(0)}
                           </div>
-                          <h4 className="font-semibold text-gray-800 mb-2">{product.name}</h4>
-                          
-                          <div className="flex items-center gap-4 mb-3">
-                            <div className="flex items-center gap-1">
-                              <Star className="w-4 h-4 text-yellow-500 fill-current" />
-                              <span className="text-sm font-medium">{product.rating}</span>
-                              <span className="text-xs text-gray-500">({product.review_count.toLocaleString()})</span>
+                          <div className="flex-1">
+                            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">{product.brand}</span>
+                            <h4 className="font-bold text-gray-800 mt-1 mb-3">{product.name}</h4>
+                            
+                            <div className="flex items-center gap-4 mb-4">
+                              <div className="flex items-center gap-1">
+                                <Star className="w-4 h-4 text-yellow-500 fill-current" />
+                                <span className="font-semibold text-sm">{product.rating}</span>
+                              </div>
+                              <div className="w-2 h-2 rounded-full bg-green-400"></div>
+                              <span className="text-sm font-semibold text-green-600">Score: {product.health_score}</span>
                             </div>
-                            <div className="flex items-center gap-1">
-                              <CheckCircle className="w-4 h-4 text-green-500" />
-                              <span className="text-sm text-green-600">Health Score: {product.health_score}</span>
+                            
+                            <div className="flex flex-wrap gap-2 mb-4">
+                              {product.skin_type.slice(0, 3).map((type, i) => (
+                                <span key={i} className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-semibold">
+                                  {type}
+                                </span>
+                              ))}
                             </div>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-2 mb-4">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-gray-600">Skin Type:</span>
-                          <div className="flex gap-1">
-                            {product.skin_type.map((type, i) => (
-                              <span key={i} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
-                                {type}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm text-gray-600">Concerns:</span>
-                          <div className="flex gap-1 flex-wrap">
-                            {product.concerns.map((concern, i) => (
-                              <span key={i} className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
-                                {concern}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2">
-                          <DollarSign className="w-4 h-4 text-green-600" />
-                          <span className="text-lg font-bold text-green-600">
-                            ${product.average_price}
-                          </span>
-                          <span className="text-sm text-gray-500">{product.currency}</span>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm text-gray-600">Match Score</div>
-                          <div className="text-lg font-semibold text-blue-600">
-                            {Math.round(product.substitute_score * 100)}%
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => getPriceComparison(product.product_id)}
-                          className="flex-1 bg-blue-100 text-blue-700 px-4 py-2 rounded-lg hover:bg-blue-200 transition-colors flex items-center justify-center gap-2"
-                        >
-                          <DollarSign className="w-4 h-4" />
-                          Compare Prices
-                        </button>
-                        <a
-                          href={product.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-1 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors flex items-center justify-center gap-2"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                          View Product
-                        </a>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                
-{priceComparison && (
-  <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-    <h4 className="font-semibold mb-3">
-      💰 Price Comparison for {priceComparison.product_name}
-    </h4>
-    <div className="grid gap-3 md:grid-cols-2">
-      {priceComparison.price_sources.map((source, idx) => (
-        <div
-          key={idx}
-          className="flex items-center justify-between p-3 bg-white rounded border"
-        >
-          <div>
-            <div className="font-medium">{source.retailer}</div>
-            <div className="text-sm text-gray-600">{source.shipping}</div>
-          </div>
-          <div className="text-right">
-            <div className="font-bold text-green-600">
-              ${source.price.toFixed(2)}
-            </div>
-            <div className="text-xs text-gray-500">
-              {source.in_stock ? 'In Stock' : 'Out of Stock'}
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  </div>
-)}              
-              </div>
-            )}
-
-            {/* Substitutes */}
-            {analysis.flaggedIngredients.length > 0 && (
-              <div className="bg-white rounded-2xl shadow-lg p-8">
-                <h3 className="text-xl font-semibold mb-4">🧪 Ingredient-Level Substitutes</h3>
-                <div className="space-y-4">
-                  {analysis.flaggedIngredients.map((ing, idx) => {
-                    const subs = substitutes[ing.normalized] || [];
-                    return subs.length > 0 ? (
-                      <div key={idx} className="border-l-4 border-green-500 pl-4">
-                        <p className="font-semibold text-gray-800 mb-2">
-                          Instead of: <span className="text-red-600">{ing.ingredient}</span>
-                        </p>
-                        {subs.map((sub, sidx) => (
-                          <div key={sidx} className="bg-green-50 rounded-lg p-3 mb-2">
+                            
                             <div className="flex items-center justify-between">
-                              <p className="font-medium text-green-800">{sub.name}</p>
-                              <span className="text-green-700 font-semibold">{sub.score}/100</span>
+                              <span className="text-2xl font-bold text-gray-800">${product.average_price}</span>
+                              <a
+                                href={product.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-6 py-2 rounded-full font-bold text-white text-sm"
+                                style={{ background: 'linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%)' }}
+                              >
+                                View Product
+                              </a>
                             </div>
-                            <p className="text-sm text-green-700 mt-1">{sub.type}</p>
                           </div>
-                        ))}
+                        </div>
                       </div>
-                    ) : null;
-                  })}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
         )}
-
-        {/* Footer Info */}
-        <div className="mt-8 text-center text-sm text-gray-600">
-          <p>Health scores based on ingredient frequency analysis, safety databases, and clinical research</p>
-          <p className="mt-1">Data source: Skincare Products Clean Dataset (Kaggle)</p>
-        </div>
       </div>
     </div>
   );
